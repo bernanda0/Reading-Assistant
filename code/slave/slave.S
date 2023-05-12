@@ -13,8 +13,28 @@ main:
   RCALL init_serial
   LDI R17, (1<<SPE)
   OUT SPCR, R17      ; enable SPI as slave
+  LDI R21, 0xF0
+  OUT DDRD, R21      ; port D[7:4] is o/p
+  SBI DDRD, 3        ; for buzzer
 
 again:
+  ;------------------------------------------------------
+  ; I2C reading
+  ;------------------------------------------------------- 
+  RCALL I2C_init      ;initialize TWI module
+  RCALL I2C_listen    ;listen to bus to be addressed
+  RCALL I2C_read      ;read data byte
+  CPI R27, 0xC         ; Bandingkan R17 dengan value 
+  BRSH led_off
+  led_on: 
+    LDI R21, 0xF0
+    OUT PORTD, R21
+    RJMP continue
+  led_off:
+    LDI R21, 0x0
+    OUT PORTD, R21
+  continue:
+
   ;-------------------------------------------------------
   ; SPI reading
   ;-------------------------------------------------------
@@ -22,6 +42,16 @@ again:
     IN R18, SPSR
     SBRS R18, SPIF   ; wait for byte reception
     RJMP l1
+
+  IN R16, SPDR       ; i/p byte from data register
+  CPI R16, 0xF
+  BRSH off
+  on:
+    SBI PORTD, 3          ;turn on the PD2  
+    RJMP continue2
+  off:
+    CBI PORTD, 3
+  continue2:
 
   IN R16, SPDR       ; i/p byte from data register
   RCALL ASCII_MSD    ; Mendapatkan ASCII dari MSD
@@ -84,6 +114,36 @@ A_F_D0:
   SUBI R16, -7      ;R16 = R16 - (7) = R16 + 7
   RJMP lo2
   
+;====================================================
+; sub routine for I2C
+;====================================================
+I2C_init:
+  LDI R21, 0b10010000
+  STS TWAR, R21 ;store slave address 0b10010000
+  LDI R21, (1<<TWEN)
+  STS TWCR, R21 ;enable TWI
+  LDI R21, (1<<TWINT)|(1<<TWEN)|(1<<TWEA)
+  STS TWCR, R21 ;enable TWI & ACK
+  RET
+
+I2C_listen:
+  LDS R21, TWCR
+  SBRS R21, TWINT
+  RJMP I2C_listen ;wait for slave to be addressed
+  RET
+
+I2C_read:
+  LDI R21, (1<<TWINT)|(1<<TWEA)|(1<<TWEN)
+  STS TWCR, R21 ;enable TWI & ACK
+  ;----------------------------------------------------------
+  wt: LDS R21, TWCR
+  SBRS R21, TWINT
+  RJMP wt ;wait for data byte to be read
+  ;----------------------------------------------------------
+  LDS R27, TWDR ;store received byte
+  RET
+
+
 delay_sec: ;1s delay
 LDI R20, 255
 l4: LDI R21, 255
