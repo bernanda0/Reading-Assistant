@@ -24,7 +24,7 @@ again:
   RCALL I2C_init      ;initialize TWI module
   RCALL I2C_listen    ;listen to bus to be addressed
   RCALL I2C_read      ;read data byte
-  CPI R27, 0xC         ; Bandingkan R17 dengan value 
+  CPI R27, 0xC        ; Bandingkan R17 dengan value 
   BRSH led_off
   led_on: 
     LDI R21, 0xF0
