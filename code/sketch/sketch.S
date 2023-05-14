@@ -40,13 +40,18 @@ main:
   ;---------------------------------------------------------
   ; Init Aktuator Buzzer
   ;---------------------------------------------------------
-  SBI DDRB, 2        ; for buzzer
+  SBI DDRD, 3        ; for buzzer
   ;---------------------------------------------------------
-  ; Init I2C LCD1602
+  ; Init I2C LCD1602 (UNUSED)
   ;---------------------------------------------------------
   ; RCALL I2C_init        ;initialize TWI module
   ; RCALL LCD_init          ;subroutine to initialize LCD
   ; RCALL delay_ms2
+  ;---------------------------------------------------------
+  ; Init SPI 7SEG MAX7219
+  ;---------------------------------------------------------
+  RCALL SPI_MAX7219_init
+  RCALL MAX7219_disp_text 
 
 again: 
   ;---------------------------------------------------------
@@ -68,7 +73,7 @@ again:
   ;-----------------------------------------------------------
   ; Action for LED
   ;---------------------------------------------------------
-  CPI R17, 0xC        ; Bandingkan R17 dengan value 
+  CPI R17, 0x69        ; Bandingkan R17 dengan value 
   BRSH led_off
   led_on: 
     LDI R21, 0xF0
@@ -92,22 +97,22 @@ again:
   RCALL LCD_buffer   ; Subroutine untuk mengecek FLAG UDRE0
   STS UDR0, R16   
 
-
   ;---------------------------------------------------------
   ; Reading Sensor HCSR04
   ;---------------------------------------------------------
   RCALL hcsr_read
-
+  MOV R16, R28
+  ; RCALL byte_to_decimal
   ;---------------------------------------------------------
   ; Action for Buzzer
   ;---------------------------------------------------------
-  CPI R28, 0xF
+  CPI R16, 0xF
   BRSH buzzer_off
   buzzer_on:
-    SBI PORTB, 2          ;turn on the PD2  
+    SBI PORTD, 3          ;turn on the PD2  
     RJMP continue2
   buzzer_off:
-    CBI PORTB, 2          ;turn off the PD2
+    CBI PORTD, 3          ;turn off the PD2
   continue2:
 
   ;---------------------------------------------------------
@@ -143,6 +148,9 @@ again:
 
 ;==================================================================
 
+;---------------------------------------------------------
+; Subroutine for Serial Monitor
+;---------------------------------------------------------
 init_serial:
   CLR R24
   STS UCSR0A, R24   ; clear UCSR0A register
@@ -188,6 +196,111 @@ A_F_D1:
 A_F_D0:
   SUBI R16, -7      ;R16 = R16 - (7) = R16 + 7
   RJMP lo2
+
+;---------------------------------------------------------
+; Subroutine for SPI 7SEG MAX7219
+;---------------------------------------------------------
+SPI_MAX7219_init:
+;------------
+.equ  SCK, 5
+.equ  MOSI, 3
+.equ  SS, 2
+;--------------------------------------------------------------
+      LDI   R17, (1<<MOSI)|(1<<SCK)|(1<<SS)
+      OUT   DDRB, R17       ;set MOSI, SCK, SS as o/p
+      ;--------------------------------------------------------
+      LDI   R17, (1<<SPE)|(1<<MSTR)|(1<<SPR0)
+      OUT   SPCR, R17       ;enable SPI as master, fsck=fosc/16
+      ;--------------------------------------------------------
+      LDI   R17, 0x0A       ;set segment intensity (0 to 15)
+      LDI   R18, 8          ;intensity level = 8
+      RCALL send_bytes      ;send command & data to MAX7219
+      ;--------------------------------------------------------
+      LDI   R17, 0x09       ;set decoding mode command
+      LDI   R18, 0b00000011 ;decoding byte
+      RCALL send_bytes      ;send command & data to MAX7219
+      ;--------------------------------------------------------
+      LDI   R17, 0x0B       ;set scan limit command
+      LDI   R18, 0x07       ;8 digits connected to MAX7219
+      RCALL send_bytes      ;send command & data to MAX7219
+      ;--------------------------------------------------------
+      LDI   R17, 0x0C       ;set turn ON/OFF command
+      LDI   R18, 0x01       ;turn ON MAX7219
+      RCALL send_bytes      ;send command & data to MAX7219
+      ;--------------------------------------------------------
+      RET
+;==============================================================
+MAX7219_disp_text:
+;-----------------
+      LDI   R17, 0x08       ;select digit 7
+      LDI   R18, 0x3D       ;data = d
+      RCALL send_bytes      ;send command & data to MAX7219
+      ;--------------------------------------------------------
+      LDI   R17, 0x07       ;select digit 6
+      LDI   R18, 0x00       ;data = space
+      RCALL send_bytes      ;send command & data to MAX7219
+      ;--------------------------------------------------------
+      LDI   R17, 0x04       ;select digit 3
+      LDI   R18, 0x00       ;data = space
+      RCALL send_bytes      ;send command & data to MAX7219
+      ;--------------------------------------------------------
+      LDI   R17, 0x03       ;select digit 2
+      LDI   R18, 0x0D       ;data = c
+      RCALL send_bytes      ;send command & data to MAX7219
+      ;--------------------------------------------------------
+      LDI   R17, 0x02       ;select digit 1
+      LDI   R18, 0x15       ;data = n
+      RCALL send_bytes      ;send command & data to MAX7219
+      ;--------------------------------------------------------
+      LDI   R17, 0x01       ;select digit 0
+      LDI   R18, 0x0F       ;data = t
+      RCALL send_bytes      ;send command & data to MAX7219
+      ;--------------------------------------------------------
+      RET
+;==============================================================
+send_bytes:
+      CBI   PORTB, SS       ;enable slave device MAX7219
+      OUT   SPDR, R17       ;transmit command
+      ;--------------------------------------------------------
+ls2:  IN    R19, SPSR
+      SBRS  R19, SPIF       ;wait for byte transmission
+      RJMP  ls2              ;to complete
+      ;--------------------------------------------------------
+      OUT   SPDR, R18       ;transmit data
+      ;--------------------------------------------------------
+ls3:  IN    R19, SPSR
+      SBRS  R19, SPIF       ;wait for byte transmission
+      RJMP  ls3              ;to complete
+      ;--------------------------------------------------------
+      SBI   PORTB, SS       ;disable slave device MAX7219
+      RET
+;==============================================================
+byte_to_decimal:
+;------------
+      CLR   R26             ;set counter1, initial value 0
+      CLR   R27             ;set counter2, initial value 0
+      ;--------------------------------------------------------
+ls4:  CPI   R28, 100        ;compare R28 with 100
+Ret:  BRMI  ls5            ;jump when R28 < 100
+      INC   R26             ;increment counter1 by 1
+      SUBI  R28, 100        ;R28 = R28 - 100
+      RJMP  ls4
+      ;--------------------------------------------------------
+ls5:  CPI   R28, 10         ;compare R28 with 10
+      BRMI  dsp             ;jump when R28 < 10
+      INC   R27             ;increment counter2 by 1
+      SUBI  R28, 10         ;R28 = R28 - 10
+      RJMP  ls5
+      ;--------------------------------------------------------  
+dsp:  MOV   R18, R27
+      LDI   R17, 0x06       ;select digit 5 for MSD
+      RCALL send_bytes      ;send command & data to MAX7219
+      ;--------------------------------------------------------
+      MOV   R18, R28
+      LDI   R17, 0x05       ;select digit 4 for LSD
+      RCALL send_bytes      ;send command & data to MAX7219    
+      ;--------------------------------------------------------
+      RET
 
 ;---------------------------------------------------------
 ; Subroutine for I2C LCD
@@ -303,26 +416,6 @@ LCD_init:
     RCALL send_char_mode0
 
     RET 
-    
-command_wrt:
-    MOV   R27, R16
-    ANDI  R27, 0xF0         ;mask low nibble & keep high nibble
-    OUT   PORTD, R27        ;o/p high nibble to port D
-    CBI   PORTB, 1          ;RS = 0 for command
-    SBI   PORTB, 0          ;EN = 1
-    RCALL delay_short       ;widen EN pulse
-    CBI   PORTB, 0          ;EN = 0 for H-to-L pulse
-    RCALL delay_us          ;delay in micro seconds
-    ;----------------------------------------------------
-    MOV   R27, R16
-    SWAP  R27               ;swap nibbles
-    ANDI  R27, 0xF0         ;mask low nibble & keep high nibble
-    OUT   PORTD, R27        ;o/p high nibble to port D
-    SBI   PORTB, 0          ;EN = 1
-    RCALL delay_short       ;widen EN pulse
-    CBI   PORTB, 0          ;EN = 0 for H-to-L pulse
-    RCALL delay_us          ;delay in micro seconds
-    RET
 
 ;---------------------------------------------------------
 ; Subroutine for reading HCSR04
@@ -415,3 +508,15 @@ l8: DEC   R23
     DEC   R21
     BRNE  l6
     RET
+
+my_delay:
+      LDI   R21, 255
+l9:   LDI   R22, 255
+l10:  LDI   R23, 40
+l11:  DEC   R23
+      BRNE  l8
+      DEC   R22
+      BRNE  l7
+      DEC   R21
+      BRNE  l6
+      RET
