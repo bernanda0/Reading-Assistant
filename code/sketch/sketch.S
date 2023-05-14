@@ -7,7 +7,7 @@
 .global main
 
 msg_distance:
-  .ascii "Distance: "
+  .ascii "hey "
   .byte 0
 msg_dark:
   .ascii "Too dark"
@@ -18,6 +18,7 @@ msg_close:
 ;==================================================================
 
 main:
+  RCALL init_serial
   ;---------------------------------------------------------
   ; Init Sensor Photoresistor
   ;---------------------------------------------------------
@@ -43,9 +44,9 @@ main:
   ;---------------------------------------------------------
   ; Init I2C LCD1602
   ;---------------------------------------------------------
-  RCALL I2C_init        ;initialize TWI module
-  RCALL LCD_init          ;subroutine to initialize LCD
-  RCALL delay_ms2
+  ; RCALL I2C_init        ;initialize TWI module
+  ; RCALL LCD_init          ;subroutine to initialize LCD
+  ; RCALL delay_ms2
 
 again: 
   ;---------------------------------------------------------
@@ -57,17 +58,17 @@ again:
     LDS R20, ADCSRA     ; cek ADIF (set atau tidak)
     SBRS R20, 4         ; skip jump saat konversi selesai
     RJMP wait_ldr       ; loop jika belum
-  ;-----------------------------------------------------------
+  ; ;-----------------------------------------------------------
   LDI R17, 0xD7         ; set ADIF lagi
   STS ADCSRA, R17       ; untuk meng-clears ADIF
-  ;-----------------------------------------------------------
+  ; ;-----------------------------------------------------------
   LDS R16, ADCL         ; Load isi ADCL ke R16
   LDS R17, ADCH         ; Load isi ADCH ke R17
 
   ;-----------------------------------------------------------
   ; Action for LED
   ;---------------------------------------------------------
-  CPI R17, 0xC         ; Bandingkan R17 dengan value 
+  CPI R17, 0xC        ; Bandingkan R17 dengan value 
   BRSH led_off
   led_on: 
     LDI R21, 0xF0
@@ -77,6 +78,20 @@ again:
     LDI R21, 0x0
     OUT PORTD, R21
   continue:
+
+  MOV R16, R17
+  RCALL ASCII_MSD    ; Mendapatkan ASCII dari MSD
+  RCALL LCD_buffer
+  STS UDR0, R16
+
+  RCALL ASCII_LSD    ; Mendapatkan ASCII dari LSD
+  RCALL LCD_buffer   ; Subroutine untuk mengecek FLAG UDRE0
+  STS UDR0, R16      ; print LSD
+
+  LDI R16, 10       ;
+  RCALL LCD_buffer   ; Subroutine untuk mengecek FLAG UDRE0
+  STS UDR0, R16   
+
 
   ;---------------------------------------------------------
   ; Reading Sensor HCSR04
@@ -96,39 +111,110 @@ again:
   continue2:
 
   ;---------------------------------------------------------
-  ; Action for LCD
+  ; Action for LCD line 1
   ;---------------------------------------------------------
   print_msg:
-  LDI R30, lo8(msg_distance)
-  LDI R31, hi8(msg_distance) ;Z points to string message
+  LDI R30, lo8(msg_dark)
+  LDI R31, hi8(msg_dark) ;Z points to string message
   agn:
     LPM R17, Z+       ;load char of string onto R18
     CPI R17, 0        ;check if R18=0 (end of string)
     BREQ ext          ;if yes, exit
-    RCALL send_char   ;else, send char to LCD
+    RCALL send_char_mode1   ;else, send char to LCD
     RJMP agn          ;loop back & get next character
   ext:
 
-  RCALL delay_ms
-  RCALL delay_ms
-  
+  ; zzer:
+  ; SBI PORTB, 2
+  ; ; LDI R17, 0xC0
+  ; ; RCALL send_char_mode0
+  ; ; LDI R17, 2
+  ; ; SUBI R17, -48
+  ; ; RCALL send_char_mode1
+  ; RCALL delay_ms2
+
+  ; CBI PORTB, 2
+  ; RCALL delay_ms2
+  ; RJMP zzer
+
+  RCALL delay_ms2
+
   RJMP again
 
 ;==================================================================
 
+init_serial:
+  CLR R24
+  STS UCSR0A, R24   ; clear UCSR0A register
+  STS UBRR0H, R24   ; clear UBRR0H register  
+  LDI R24, 103      ; store in UBRR0L 103 value
+  STS UBRR0L, R24   ; to set baud rate 9600
+  LDI R24, 1<<RXEN0 | 1<<TXEN0   ;enable RXB & TXB
+  STS UCSR0B, R24
+  LDI R24, 1<<UCSZ00 | 1<<UCSZ01 ;asynch, no parity, 1 stop, 8 bits
+  STS UCSR0C, R24
+  RET
+
+LCD_buffer:
+  LDS R28, UCSR0A
+  SBRS R28, UDRE0 ;test data buffer if data can be sent
+  RJMP LCD_buffer
+  RET
+
+ASCII_MSD: ;Proses mendapatkan ASCII dari MSD
+  MOV R23, R16      ;save copy of result
+  ANDI R16, 0xF0    ;extract & swap high-nibble
+  SWAP R16
+  SUBI R16, -48     ;R16 = R16 - (48) = R16 + 48
+  MOV R28, R16      ;save a copy of high-byte result
+  SUBI R28, 58      ;if +ve    
+  BRPL A_F_D1       ;branch & add 7 to get ASCII A to F
+lo1: 
+  RET
+
+ASCII_LSD: ;Proses mendapatkan ASCII dari LSD
+  MOV R16, R23      ;restore copy of result
+  ANDI R16, 0x0F    ;extract low-nibble
+  SUBI R16, -48     ;R16 = R16 - (48) = R16 + 48
+  MOV R28, R16      ;save a copy of high-byte result
+  SUBI R28, 58      ;if +ve
+  BRPL A_F_D0       ;branch & add 7 to get ASCII A to F
+lo2: 
+  RET
+
+A_F_D1:
+  SUBI R16, -7      ;R16 = R16 - (7) = R16 + 7
+  RJMP lo1
+A_F_D0:
+  SUBI R16, -7      ;R16 = R16 - (7) = R16 + 7
+  RJMP lo2
+
 ;---------------------------------------------------------
 ; Subroutine for I2C LCD
 ;---------------------------------------------------------
-send_char:
+send_char_mode1:
   MOV R23, R17    ;save copy of result
   ANDI R17, 0xF0  ;extract high-nibble
-  OR R17, 1       ;RS = 1 for data
+  ORI R17, 1      ;RS = 1 for data
   RCALL send4bits ;send high-nibble
 
   MOV R17, R23    ;restore copy of result
   ANDI R17, 0x0F  ;extract & swap low-nibble
   SWAP R17        ;swap nibbles
-  OR R17, 1       ;RS = 1 for data
+  ORI R17, 1       ;RS = 1 for data
+  RCALL send4bits ;send low-nibble
+  RET
+
+send_char_mode0:
+  MOV R23, R17    ;save copy of result
+  ANDI R17, 0xF0  ;extract high-nibble
+  ORI R17, 0      ;RS = 0 for data
+  RCALL send4bits ;send high-nibble
+
+  MOV R17, R23    ;restore copy of result
+  ANDI R17, 0x0F  ;extract & swap low-nibble
+  SWAP R17        ;swap nibbles
+  ORI R17, 0      ;RS = 0 for data
   RCALL send4bits ;send low-nibble
 
 send4bits:
@@ -137,7 +223,7 @@ send4bits:
 
   RCALL I2C_cycle       ; send data in R17
   
-  OR R16, 0b00000100
+  ORI R16, 0b00000100
   MOV R17, R16
   RCALL I2C_cycle       ; send dat EN = 1
   RCALL delay_short
@@ -194,22 +280,28 @@ I2C_stop:
   RET
 
 LCD_init:
-    LDI   R16, 0x33         ;init LCD for 4-bit data
-    RCALL command_wrt       ;send to command register
+    LDI   R17, 0x33         ;init LCD for 4-bit data
+    RCALL send_char_mode0
     RCALL delay_ms
-    LDI   R16, 0x32         ;init LCD for 4-bit data
-    RCALL command_wrt
+
+    LDI   R17, 0x32         ;init LCD for 4-bit data
+    RCALL send_char_mode0
     RCALL delay_ms
-    LDI   R16, 0x28         ;LCD 2 lines, 5x7 matrix
-    RCALL command_wrt
+
+    LDI   R17, 0x28         ;LCD 2 lines, 5x7 matrix
+    RCALL send_char_mode0
     RCALL delay_ms
-    LDI   R16, 0x0C         ;disp ON, cursor OFF
-    RCALL command_wrt
-    LDI   R16, 0x01         ;clear LCD
-    RCALL command_wrt
+
+    LDI   R17, 0x0C         ;disp ON, cursor OFF
+    RCALL send_char_mode0
+
+    LDI   R17, 0x01         ;clear LCD
+    RCALL send_char_mode0
     RCALL delay_ms
-    LDI   R16, 0x06         ;shift cursor right
-    RCALL command_wrt
+
+    LDI   R17, 0x06         ;shift cursor right
+    RCALL send_char_mode0
+
     RET 
     
 command_wrt:
@@ -315,7 +407,7 @@ delay_ms2:
 ;--------
     LDI   R21, 255
 l6: LDI   R22, 255
-l7: LDI   R23, 128
+l7: LDI   R23, 80
 l8: DEC   R23
     BRNE  l8
     DEC   R22
