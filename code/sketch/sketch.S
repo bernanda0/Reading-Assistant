@@ -1,22 +1,36 @@
-;-----------------------
-; Bernanda - 2106708463
-;-----------------------
+;---------------------------------------------------------
+; READING ASSISTANT WITH ADAPTIVE ENVIRONMENT FEEDBACK
+;---------------------------------------------------------
+; Author : Group A2
+; 1. Bernanda Nautval RIW 
+; 2. Muhammad Najih Aflah 
+; 3. Raden Bagus Kresna   
+; 4. Reichan Adiguno      
+;---------------------------------------------------------
 
 #define __SFR_OFFSET 0x00
 #include "avr/io.h"
 .global main
 
+msg_distance:
+.ascii "dist : 0x"
+.byte 0
+
+msg_brightness:
+.ascii "bright : 0x"
+.byte 0
 ;==================================================================
 
 main:
   ;---------------------------------------------------------
-  ; Init SPI 7SEG MAX7219
+  ; Init SPI 7SEG MAX7219 + serial monitor
   ;---------------------------------------------------------
   .equ  SCK, 5
   .equ  MOSI, 3
   .equ  SS, 2
   RCALL SPI_MAX7219_init
   RCALL MAX7219_disp_good 
+
   RCALL init_serial
 
   ;---------------------------------------------------------
@@ -43,14 +57,7 @@ main:
   ;---------------------------------------------------------
   ; Init Aktuator Buzzer
   ;---------------------------------------------------------
-  SBI DDRD, 3        ; for buzzer
-
-  ;---------------------------------------------------------
-  ; Init I2C LCD1602 (UNUSED)
-  ;---------------------------------------------------------
-  ; RCALL I2C_init        ;initialize TWI module
-  ; RCALL LCD_init          ;subroutine to initialize LCD
-  ; RCALL delay_ms2
+  SBI DDRD, 3           ; for buzzer output
 
 again: 
   ;---------------------------------------------------------
@@ -69,6 +76,8 @@ again:
   LDS R16, ADCL         ; Load isi ADCL ke R16
   LDS R17, ADCH         ; Load isi ADCH ke R17
 
+  RCALL print_msg_ldr
+
   ;-----------------------------------------------------------
   ; Action for LED
   ;---------------------------------------------------------
@@ -82,33 +91,20 @@ again:
   led_off:
     LDI R21, 0x0
     OUT PORTD, R21
-    RCALL MAX7219_disp_good
+    LDI R22, 1
   continue:
-
-  MOV R16, R17
-  RCALL ASCII_MSD    ; Mendapatkan ASCII dari MSD
-  RCALL LCD_buffer
-  STS UDR0, R16
-
-  RCALL ASCII_LSD    ; Mendapatkan ASCII dari LSD
-  RCALL LCD_buffer   ; Subroutine untuk mengecek FLAG UDRE0
-  STS UDR0, R16      ; print LSD
-
-  LDI R16, '|'       ;
-  RCALL LCD_buffer   ; Subroutine untuk mengecek FLAG UDRE0
-  STS UDR0, R16   
 
   ;---------------------------------------------------------
   ; Reading Sensor HCSR04
   ;---------------------------------------------------------
   RCALL hcsr_read
-  ;RCALL byte_to_decimal
-  MOV R16, R28
-  
-  ;---------------------------------------------------------
+  MOV R17, R28
+  RCALL print_msg_hcsr
+  MOV R28, R17
+  ;--------------------------------------------------------
   ; Action for Buzzer
   ;---------------------------------------------------------
-  CPI R16, 0xF
+  CPI R17, 0xF
   BRSH buzzer_off
   buzzer_on:
     SBI PORTD, 3          ;turn on the PD2
@@ -116,8 +112,21 @@ again:
     RJMP continue2
   buzzer_off:
     CBI PORTD, 3          ;turn off the PD2
-    RCALL MAX7219_disp_good
+    LDI R24, 1
   continue2:
+
+  RCALL byte_to_decimal
+
+  ;---------------------------------------------------------
+  ; Good reading env state
+  ;---------------------------------------------------------
+  AND R22, R24
+  CPI R22, 1
+  BRSH good
+  RJMP continue3
+  good: 
+    RCALL MAX7219_disp_good
+  continue3:
 
   RCALL delay_ms2
   RJMP again
@@ -173,6 +182,58 @@ A_F_D0:
   SUBI R16, -7      ;R16 = R16 - (7) = R16 + 7
   RJMP lo2
 
+print_msg_ldr:
+  LDI R30, lo8(msg_brightness)
+  agn:
+    LPM R29, Z+       ;load char of string onto R18
+    CPI R29, 0        ;check if R29=0 (end of string)
+    BREQ ext          ;if yes, exit
+    RCALL LCD_buffer  ;LCD buffer ready?
+    STS UDR0, R29     ;send char in R18 to serial monitor
+    RJMP agn          ;loop back & get next character
+  ext:
+
+  MOV R16, R17
+  RCALL ASCII_MSD    ; Mendapatkan ASCII dari MSD
+  RCALL LCD_buffer
+  STS UDR0, R16
+
+  RCALL ASCII_LSD    ; Mendapatkan ASCII dari LSD
+  RCALL LCD_buffer   ; Subroutine untuk mengecek FLAG UDRE0
+  STS UDR0, R16      ; print LSD
+
+  LDI R16, ' '       ;
+  RCALL LCD_buffer   ; Subroutine untuk mengecek FLAG UDRE0
+  STS UDR0, R16   
+
+  RET
+
+print_msg_hcsr:
+  LDI R30, lo8(msg_distance)
+  agn2:
+    LPM R29, Z+       ;load char of string onto R18
+    CPI R29, 0        ;check if R29=0 (end of string)
+    BREQ ext2          ;if yes, exit
+    RCALL LCD_buffer  ;LCD buffer ready?
+    STS UDR0, R29     ;send char in R18 to serial monitor
+    RJMP agn2          ;loop back & get next character
+  ext2:
+
+  MOV R16, R17
+  RCALL ASCII_MSD    ; Mendapatkan ASCII dari MSD
+  RCALL LCD_buffer
+  STS UDR0, R16
+
+  RCALL ASCII_LSD    ; Mendapatkan ASCII dari LSD
+  RCALL LCD_buffer   ; Subroutine untuk mengecek FLAG UDRE0
+  STS UDR0, R16      ; print LSD
+
+  LDI R16, ' '       ;
+  RCALL LCD_buffer   ; Subroutine untuk mengecek FLAG UDRE0
+  STS UDR0, R16   
+
+  RET
+
 ;---------------------------------------------------------
 ; Subroutine for SPI 7SEG MAX7219
 ;---------------------------------------------------------
@@ -201,7 +262,6 @@ SPI_MAX7219_init:
   RCALL send_bytes      ;send command & data to MAX7219
   ;--------------------------------------------------------
   RET
-;==============================================================
 
 MAX7219_disp_good:
   LDI   R17, 0x08       ;select digit 7
@@ -224,19 +284,9 @@ MAX7219_disp_good:
   LDI   R18, 0x00       ;data = E
   RCALL send_bytes      ;send command & data to MAX7219
   ;--------------------------------------------------------
-  LDI   R17, 0x02       ;select digit 1
-  LDI   R18, 0xFF       ;data = !
-  RCALL send_bytes      ;send command & data to MAX7219
-  ;--------------------------------------------------------
-  LDI   R17, 0x01       ;select digit 0
-  LDI   R18, 0xFF       ;data = !
-  RCALL send_bytes      ;send command & data to MAX7219
-  ;-------------------------------------------------------
-  
   RET
 
 MAX7219_disp_dark:
-;-----------------
   LDI   R17, 0x08       ;select digit 7
   LDI   R18, 0x3D       ;data = d
   RCALL send_bytes      ;send command & data to MAX7219
@@ -264,7 +314,6 @@ MAX7219_disp_dark:
   RET
 
 MAX7219_disp_close:
-;-----------------
   LDI   R17, 0x08       ;select digit 7
   LDI   R18, 0x4E       ;data = C
   RCALL send_bytes      ;send command & data to MAX7219
@@ -274,63 +323,68 @@ MAX7219_disp_close:
   RCALL send_bytes      ;send command & data to MAX7219
   ;--------------------------------------------------------
   LDI   R17, 0x06       ;select digit 3
-  LDI   R18, 0x1D       ;data = o
+  LDI   R18, 0x5B       ;data = S
   RCALL send_bytes      ;send command & data to MAX7219
   ;--------------------------------------------------------
-  LDI   R17, 0x05       ;select digit 2
-  LDI   R18, 0x5B       ;data = s
-  RCALL send_bytes      ;send command & data to MAX7219
-  ;--------------------------------------------------------
-  LDI   R17, 0x04       ;select digit 1
-  LDI   R18, 0x4F       ;data = E
+  LDI   R17, 0x05       ;select digit 3
+  LDI   R18, 0x0        ;data = blank
   RCALL send_bytes      ;send command & data to MAX7219
   ;--------------------------------------------------------
   RET
-;==============================================================
+
 send_bytes:
-      CBI   PORTB, SS       ;enable slave device MAX7219
-      OUT   SPDR, R17       ;transmit command
-      ;--------------------------------------------------------
-ls2:  IN    R19, SPSR
-      SBRS  R19, SPIF       ;wait for byte transmission
-      RJMP  ls2              ;to complete
-      ;--------------------------------------------------------
-      OUT   SPDR, R18       ;transmit data
-      ;--------------------------------------------------------
-ls3:  IN    R19, SPSR
-      SBRS  R19, SPIF       ;wait for byte transmission
-      RJMP  ls3              ;to complete
-      ;--------------------------------------------------------
-      SBI   PORTB, SS       ;disable slave device MAX7219
-      RET
-;==============================================================
+  CBI   PORTB, SS       ;enable slave device MAX7219
+  OUT   SPDR, R17       ;transmit command
+  ;--------------------------------------------------------
+  ls2:
+    IN    R19, SPSR
+    SBRS  R19, SPIF       ;wait for byte transmission
+    RJMP  ls2              ;to complete
+    ;--------------------------------------------------------
+    OUT   SPDR, R18       ;transmit data
+    ;-------------------------------------------------------- 
+  ls3:
+    IN    R19, SPSR
+    SBRS  R19, SPIF       ;wait for byte transmission
+    RJMP  ls3              ;to complete
+    ;--------------------------------------------------------
+    SBI   PORTB, SS       ;disable slave device MAX7219
+  
+  RET
+
 byte_to_decimal:
-;------------
-      CLR   R26             ;set counter1, initial value 0
-      CLR   R27             ;set counter2, initial value 0
-      ;--------------------------------------------------------
-ls4:  CPI   R28, 100        ;compare R28 with 100
-Ret:  BRMI  ls5            ;jump when R28 < 100
-      INC   R26             ;increment counter1 by 1
-      SUBI  R28, 100        ;R28 = R28 - 100
-      RJMP  ls4
-      ;--------------------------------------------------------
-ls5:  CPI   R28, 10         ;compare R28 with 10
-      BRMI  dsp             ;jump when R28 < 10
-      INC   R27             ;increment counter2 by 1
-      SUBI  R28, 10         ;R28 = R28 - 10
-      RJMP  ls5
-      ;--------------------------------------------------------  
-dsp:  MOV   R18, R27
-      LDI   R17, 0x06       ;select digit 5 for MSD
-      RCALL send_bytes      ;send command & data to MAX7219
-      ;--------------------------------------------------------
-      MOV   R18, R28
-      LDI   R17, 0x05       ;select digit 4 for LSD
-      RCALL send_bytes      ;send command & data to MAX7219    
-      ;--------------------------------------------------------
-      RET
-      
+  CLR   R26             ;set counter1, initial value 0
+  CLR   R27             ;set counter2, initial value 0
+  ;--------------------------------------------------------
+  ls4: CPI   R28, 100        ;compare R28 with 100
+  Ret: 
+    BRMI  ls5            ;jump when R28 < 100
+    INC   R26             ;increment counter1 by 1
+    SUBI  R28, 100        ;R28 = R28 - 100
+    RJMP  ls4
+    ;--------------------------------------------------------
+  ls5: 
+    CPI   R28, 10         ;compare R28 with 10
+    BRMI  dsp             ;jump when R28 < 10
+    INC   R27             ;increment counter2 by 1
+    SUBI  R28, 10         ;R28 = R28 - 10
+    RJMP  ls5
+    ;--------------------------------------------------------  
+  dsp:
+    LDI   R18, 0x3D
+    LDI   R17, 0x03       ;select digit 4 for LSD
+    RCALL send_bytes      ;send command & data to MAX7219    
+    ;--------------------------------------------------------
+    MOV   R18, R27
+    LDI   R17, 0x02       ;select digit 5 for MSD
+    RCALL send_bytes      ;send command & data to MAX7219
+    ;--------------------------------------------------------
+    MOV   R18, R28
+    LDI   R17, 0x01       ;select digit 4 for LSD
+    RCALL send_bytes      ;send command & data to MAX7219    
+    ;--------------------------------------------------------
+  RET
+
 ;---------------------------------------------------------
 ; Subroutine for reading HCSR04
 ;---------------------------------------------------------
@@ -342,13 +396,14 @@ hcsr_read:
   RET
 
 echo_PW:
-    ;-------
-    LDI   R20, 0b00000000
-    STS   TCCR1A, R20     ;Timer 1 normal mode
-    LDI   R20, 0b11000101 ;set for rising edge detection &
-    STS   TCCR1B, R20     ;prescaler=1024, noise cancellation ON
-    ;-----------------------------------------------------------
-l1: IN    R21, TIFR1
+  ;-------
+  LDI   R20, 0b00000000
+  STS   TCCR1A, R20     ;Timer 1 normal mode
+  LDI   R20, 0b11000101 ;set for rising edge detection &
+  STS   TCCR1B, R20     ;prescaler=1024, noise cancellation ON
+  ;-----------------------------------------------------------
+  l1: 
+    IN    R21, TIFR1
     SBRS  R21, ICF1
     RJMP  l1              ;loop until rising edge is detected
     ;------------------------------T-----------------------------
@@ -358,7 +413,8 @@ l1: IN    R21, TIFR1
     LDI   R20, 0b10000101
     STS   TCCR1B, R20     ;set for falling edge detection
     ;-----------------------------------------------------------
-l2: IN    R21, TIFR1
+  l2: 
+    IN    R21, TIFR1
     SBRS  R21, ICF1
     RJMP  l2              ;loop until falling edge is detected
     ;-----------------------------------------------------------
@@ -366,7 +422,8 @@ l2: IN    R21, TIFR1
     ;-----------------------------------------------------------
     SUB   R28, R16        ;count diff R28 = R28 - R16
     OUT   TIFR1, R21      ;clear flag for next sensor reading
-    RET
+  
+  RET
 
 ;---------------------------------------------------------
 ; Subroutine for delay
@@ -391,25 +448,6 @@ l0: IN    R20, TIFR0      ;get TIFR0 byte & check
     OUT   TIFR0, R20      ;clear OCF0 flag
     RET
 
-delay_short:
-      NOP
-      NOP
-      RET
-
-delay_us:
-      LDI   R20, 90
-l3:   RCALL delay_short
-      DEC   R20
-      BRNE  l3
-      RET
-
-delay_ms:
-      LDI   R21, 40
-l4:   RCALL delay_us
-      DEC   R21
-      BRNE  l4
-      RET
-
 delay_ms2:
 ;--------
     LDI   R21, 255
@@ -422,15 +460,4 @@ l8: DEC   R23
     DEC   R21
     BRNE  l6
     RET
-
-my_delay:
-      LDI   R21, 255
-l9:   LDI   R22, 255
-l10:  LDI   R23, 40
-l11:  DEC   R23
-      BRNE  l8
-      DEC   R22
-      BRNE  l7
-      DEC   R21
-      BRNE  l6
-      RET
+    
